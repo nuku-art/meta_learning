@@ -1,0 +1,15 @@
+services:
+  meta_learning:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+        - .:/workspace
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 3
+              capabilities: [gpu]
+    tty: true
