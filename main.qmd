@@ -8,6 +8,8 @@ jupyter: python3
 
 # import library
 ```{python}
+## import library
+
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -19,215 +21,71 @@ from sklearn.datasets import fetch_california_housing
 from sklearn.cluster import KMeans
 import random
 import scipy
+from workspace.src.model import meta_learning
 ```
 
-# visualize data
+# prepaire dataset
 ```{python}
+## load dataset
 california_housing_data = fetch_california_housing()
 exp_data = pd.DataFrame(california_housing_data.data, columns=california_housing_data.feature_names)
 tar_data = pd.DataFrame(california_housing_data.target, columns=['HousingPrices'])
-
 data = pd.concat([exp_data, tar_data], axis=1)
-display(data.head())
-```
 
-# clustering data
-```{python}
+## clustering
 use_feature = data[['Latitude', 'Longitude']]
-print(use_feature.shape)
-
 kmeans = KMeans(n_clusters=50, random_state=87)
 clusters = kmeans.fit_predict(use_feature)
 data['Cluster'] = clusters
-display(data.head())
-
 unique, counts = np.unique(clusters, return_counts=True)
 cluster_counts = dict(zip(unique, counts))
 print(cluster_counts)
 
+## show distribution
 sns.scatterplot(x='Latitude', y='Longitude', hue='Cluster', data=data, palette='Set1', legend=False)
 plt.title('K-means Clustering Results')
 plt.show()
-```
 
-# normalize data
-```{python}
+## normalize annotation
 columns_norm = data.columns.difference(['Latitude','Longitude','Cluster'])
 data[columns_norm] = (data[columns_norm] - data[columns_norm].mean()) / data[columns_norm].std()
-display(data.head())
-```
 
-# make base dataset
-```{python}
+## prepair train_dataset and test_dataset
 threshold = 100
 count = 0
 test_key = []
 train_key = []
 for key, value in zip(cluster_counts.keys(), cluster_counts.values()):
   if value < threshold:
-    print(f'key: {key}, value: {value}')
     count += 1
     test_key.append(key)
   else:
     train_key.append(key)
 
 print(f'number of cluster whos member is lower than thresholdcount: {count}')
-print(test_key)
 
 train_data = data[data['Cluster'].isin(train_key)]
 train_data = train_data.drop(columns=['HousingPrices'])
 test_data = data[data['Cluster'].isin(test_key)]
 test_data = test_data[['Latitude', 'Longitude', 'HousingPrices', 'Cluster']]
-display(train_data.head())
-print(f'train_data shape: {train_data.shape}')
-display(test_data.head())
-print(f'test_data shape: {test_data.shape}')
 ```
 
-# define model
-```{python}
-class meta_learning(nn.Module):
-  def __init__(self):
-    super().__init__()
-    self.fc_Z_1 = nn.Linear(3,256)
-    self.fc_Z_2 = nn.Linear(256, 256)
-    self.fc_B_1 = nn.Linear(256, 256)
-    self.fc_B_2 = nn.Linear(256, 1)
-    self.fc_M_1 = nn.Linear(258, 256)
-    self.fc_M_2 = nn.Linear(256, 1)
-    self.fc_K_1 = nn.Linear(258, 256)
-    self.fc_K_2 = nn.Linear(256, 256)
-    self.dropout = nn.Dropout(0.1)
-
-  def func_Z(self, o):    # o = [x,y] in R^3 (subset)
-    o = F.relu(self.fc_Z_1(o))
-    o = self.dropout(o)
-    o = self.fc_Z_2(o)
-    return o
-  
-  def func_B(self, p):    # p = z in R^64
-    p = F.relu(self.fc_B_1(p))
-    p = self.dropout(p)
-    p = self.fc_B_2(p)
-    return p
-  
-  def func_M(self, q):    # q = [x,z] in R^66
-    q = F.relu(self.fc_M_1(q))
-    q = self.dropout(q)
-    q = self.fc_M_2(q)
-    return q
-
-  def func_K(self, r):    # r = [x,z] in R^66
-    r = F.relu(self.fc_K_1(r))
-    r = self.dropout(r)
-    r = self.fc_K_2(r)
-    return r
-  
-  def kernel_func(self, x1, x2, z): # -> scalor
-    x1_z = torch.cat((x1, z))
-    x2_z = torch.cat((x2, z))
-    delta = int(torch.all(x1_z == x2_z))
-    k = torch.exp(-torch.norm(self.func_K(x1_z)-self.func_K(x2_z), p=2)) + self.func_B(z)*delta
-    return k
-  
-  def forward(self, support_set, query_set):  # support = batch*(x1,x2,y)   query = batch*(x1,x2)
-    # Z_list = []
-    # for i in range(support_set.shape[0]):
-    #   print(support_set[i].dtype)
-    #   z = self.func_Z(support_set[i])
-    #   Z_list.append(z)
-    # Z = torch.mean(torch.stack(Z_list), dim=0)
-    Z_list = self.func_Z(support_set)
-    Z = torch.mean(Z_list, dim=0)
-
-    if query_set.dim() == 1:
-      query_set = query_set.unsqueeze(0)
-
-    # support_mean = torch.tensor([])
-    # for support_vector in support_set:
-    #   supX_Z = torch.cat((support_vector[:2],Z))
-    #   sup_mean = self.func_M(supX_Z)
-    #   support_mean = torch.cat((support_mean, sup_mean))
-    print(f'z: {Z.shape}')
-    additional_z = Z.unsqueeze(0).repeat(support_set.shape[0],1)
-    print(f'additional Z:{additional_z.shape}')
-    supportX_Z = torch.cat((support_set[:,:2], additional_z), dim=1)
-    print(f'supportX_Z:{supportX_Z.shape}')
-    support_mean = self.func_M(supportX_Z)
-
-    y_list = []
-    for query in query_set:
-      mix_k = torch.tensor([])
-      query_XZ = torch.cat((query, Z))
-      mean = self.func_M(query_XZ)
-      for support_vector in support_set:
-        kernel = self.kernel_func(query, support_vector[:2], Z)
-        mix_k = torch.cat((mix_k, kernel))
-      support_x = support_set[:,:2]
-      self_k = torch.zeros(support_x.shape[0],support_x.shape[0])
-      for i, x in enumerate(support_x):
-        for j, x_prime in enumerate(support_x):
-          self_k[i,j] = self.kernel_func(x, x_prime, Z)
-      support_y = support_set[:,2]
-      pred = mean + torch.matmul(mix_k.T, torch.linalg.inv(self_k)) @  (support_y - support_mean)
-      y_list.append(pred)
-    y = torch.stack(y_list)
-    return y
-
-
-```
-
-# check
-```{python}
-use_key = random.choice(train_key)
-choiced_region_data = train_data[train_data['Cluster']==use_key]
-# print(f'coiced region data shape:{choiced_region_data.shape}')
-
-coordinate_data = choiced_region_data[['Latitude','Longitude']]
-annotation_data = choiced_region_data.drop(columns=['Latitude','Longitude','Cluster'])
-
-annotation_columns_list = annotation_data.columns.tolist()
-choiced_annotation = random.choice(annotation_columns_list)
-# print(choiced_annotation)
-
-this_epoch_data = choiced_region_data[['Latitude','Longitude',choiced_annotation]]
-
-numpy_data = this_epoch_data.to_numpy()
-torch_data = torch.from_numpy(numpy_data).to(torch.float32)
-
-rand_index = torch.randint(0,torch_data.size(0),(69,))
-support = torch_data[rand_index[:5]]
-query = torch_data[rand_index[5:]]
-# print(support.shape)
-# print(query.shape)
-
-model = meta_learning()
-# print(f'input: {query[:,:2]}')
-pred = model(support, query[:,:2])
-
-# print(pred)
-# print(query[:,2])
-```
-
-```{python}
-display(test_data)
-```
-
-# inference
+# load model
 ```{python}
 # load model
 model = meta_learning()
 path = '/workspace/output/model/meta_model_0116.pth'
 model.load_state_dict(torch.load(path, weights_only=True))
+```
+
+# inference
+```{python}
 # select datasaet
 use_key = random.choice(test_key)
 choiced_region_data = test_data[test_data['Cluster']==use_key]
-annotation_data = choiced_region_data.drop(columns=['Cluster'])
+annotation_data = choiced_region_data.drop(columns=['Latitude','Longitude','Cluster'])
 
-print(len(test_key))
-display(annotation_data.shape)
-# ```
-
+# select annotation
 annotation_columns_list = annotation_data.columns.tolist()
 choiced_annotation = random.choice(annotation_columns_list)
 this_epoch_data = choiced_region_data[['Latitude','Longitude',choiced_annotation]]
@@ -240,9 +98,75 @@ query = torch_data[rand_index[5:]]
 with torch.no_grad():
   pred = model(support, query[:,:2])
 
-print('--------')
-print(use_key)
-print(pred)
-print(query[:,2])
+print(f'use key:{use_key}')
+print(f'annotation: {choiced_annotation}')
+print(f'label: {query[:,2]}')
+print(f'prediction: {pred}')
 ```
 
+## calcurate mseloss
+```{python}
+epoch = 500
+label_set = []
+pred_set = []
+
+for i in range(epoch):
+  if i % 30 == 29:
+    print(f'now {i+1} epoch')
+
+  ## select region
+  use_key = random.choice(test_key)
+  choiced_region_data = test_data[test_data['Cluster']==use_key]
+  now_epoch_data = choiced_region_data.drop(columns=['Cluster'])
+
+  ## select support*5 and query*15
+  numpy_data = now_epoch_data.to_numpy()
+  torch_data = torch.from_numpy(numpy_data).to(torch.float32)
+  rand_index = torch.randint(0,torch_data.size(0),(20,))
+  support = torch_data[rand_index[:5]]
+  query = torch_data[rand_index[5:]]
+  label = query[:,2]
+
+  ## prediction
+  with torch.no_grad():
+    pred = model(support, query[:,:2])
+
+  ## save result
+  label_set.append(label)
+  pred_set.append(pred)
+
+label_tensor = torch.stack(label_set)
+pred_tensor = torch.stack(pred_set)
+
+## calcurate MSEloss
+mseloss = torch.norm(label_tensor - pred_tensor, p=2) / (label_tensor.shape[0] * label_tensor.shape[1])
+print(f'MSELoss: {mseloss}')
+```
+
+## order result
+```{python}
+result_file_path = '/workspace/output/accuracy.txt'
+with open(result_file_path, mode='w') as f:
+  f.write(f'MSE Loss is {mseloss}')
+
+label_vector = torch.flatten(label_tensor)
+pred_vector = torch.flatten(pred_tensor)
+
+## visualize result
+fig, ax = plt.subplots(figsize=(6, 6))
+ax.scatter(pred_vector, label_vector, color="blue", alpha=0.6, label="Data")
+ax.set_xlim(-3, 3)
+ax.set_ylim(-3, 3)
+ax.set_aspect('equal')
+ax.plot([-3, 3], [-3, 3], color="black", linestyle="--", linewidth=2, label="y = x")
+ax.set_title('Accuracy', fontsize=14)
+ax.set_xlabel('Predicted Value', fontsize=12)
+ax.set_ylabel('True Value', fontsize=12)
+plt.show()
+```
+
+```{python}
+import datetime
+YMD = str(datetime.date.today()).replace('-','')
+print(YMD)
+```

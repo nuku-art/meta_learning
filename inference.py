@@ -3,21 +3,14 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from sklearn.datasets import fetch_california_housing
 from sklearn.cluster import KMeans
-import src.model as meta_learning
-import src.training as training
-import datetime
-import os
-from src.model import meta_learning
-from src.training import training
 import random
+import scipy
+from workspace.src.model import meta_learning
 
-YMD = str(datetime.date.today()).replace('-','')
-base_dir = f'/workspace/output/{YMD}'
-os.makedirs(base_dir, exist_ok=True)
-
-log_file_path = f'{base_dir}/log.txt'
 
 # load dataset
 california_housing_data = fetch_california_housing()
@@ -32,21 +25,16 @@ clusters = kmeans.fit_predict(use_feature)
 data['Cluster'] = clusters
 unique, counts = np.unique(clusters, return_counts=True)
 cluster_counts = dict(zip(unique, counts))
-with open(log_file_path, mode='w') as f:
-  f.write('\n')
-  f.write(f'cluster count: {cluster_counts}\n')
+print(cluster_counts)
 
-## visualize
+## show distribution
 sns.scatterplot(x='Latitude', y='Longitude', hue='Cluster', data=data, palette='Set1', legend=False)
 plt.title('K-means Clustering Results')
-plt.savefig(f'{base_dir}/cluster.png')
+plt.show()
 
 ## normalize annotation
-# columns_norm = data.columns.difference(['Latitude','Longitude','Cluster'])
-columns_norm = data.columns.difference(['Cluster'])
+columns_norm = data.columns.difference(['Latitude','Longitude','Cluster'])
 data[columns_norm] = (data[columns_norm] - data[columns_norm].mean()) / data[columns_norm].std()
-with open(log_file_path, mode='w') as f:
-  f.write("normalize latitude and longitude\n")
 
 ## prepair train_dataset and test_dataset
 threshold = 100
@@ -60,9 +48,7 @@ for key, value in zip(cluster_counts.keys(), cluster_counts.values()):
   else:
     train_key.append(key)
 
-with open(log_file_path, mode='a') as f:
-    f.write("\n")
-    f.write(f'number of cluster whos member is lower than thresholdcount: {count}\n')
+print(f'number of cluster whos member is lower than thresholdcount: {count}')
 
 train_data = data[data['Cluster'].isin(train_key)]
 train_data = train_data.drop(columns=['HousingPrices'])
@@ -74,25 +60,13 @@ model = meta_learning()
 path = '/workspace/output/model/meta_model_0116.pth'
 model.load_state_dict(torch.load(path, weights_only=True))
 
-# training
-device = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu')
-epoch = 2
-model = meta_learning()
-train = training(device=device, train_key=train_key, test_key=test_key, base_dir=base_dir, YMD=YMD)
-train.optim(model=model, train_dataset=train_data, epoch=epoch)
-
-print('finish training')
-
-# inference
-model.eval()
-
 ## inference
-epoch = 2
+epoch = 500
 label_set = []
 pred_set = []
 
 for i in range(epoch):
-  if i % 10 == 9:
+  if i % 30 == 29:
     print(f'now {i+1} epoch')
 
   ## select region
@@ -104,25 +78,28 @@ for i in range(epoch):
   numpy_data = now_epoch_data.to_numpy()
   torch_data = torch.from_numpy(numpy_data).to(torch.float32)
   rand_index = torch.randint(0,torch_data.size(0),(20,))
-  support = torch_data[rand_index[:5]].to(device)
-  query = torch_data[rand_index[5:]].to(device)
+  support = torch_data[rand_index[:5]]
+  query = torch_data[rand_index[5:]]
   label = query[:,2]
 
   ## prediction
   with torch.no_grad():
-    pred = model(support, query[:,:2], device)
+    pred = model(support, query[:,:2])
 
   ## save result
-  label_set.append(label.detach().to('cpu'))
-  pred_set.append(pred.detach().to('cpu'))
+  label_set.append(label)
+  pred_set.append(pred)
 
 label_tensor = torch.stack(label_set)
 pred_tensor = torch.stack(pred_set)
 
 ## calcurate MSEloss
 mseloss = torch.norm(label_tensor - pred_tensor, p=2) / (label_tensor.shape[0] * label_tensor.shape[1])
-with open(log_file_path, mode='w') as f:
-  f.write('\n')
+print(f'MSELoss: {mseloss}')
+
+## save mseloss
+result_file_path = '/workspace/output/accuracy.txt'
+with open(result_file_path, mode='w') as f:
   f.write(f'MSE Loss is {mseloss}')
 
 label_vector = torch.flatten(label_tensor)
@@ -138,4 +115,4 @@ ax.plot([-3, 3], [-3, 3], color="black", linestyle="--", linewidth=2, label="y =
 ax.set_title('Accuracy', fontsize=14)
 ax.set_xlabel('Predicted Value', fontsize=12)
 ax.set_ylabel('True Value', fontsize=12)
-plt.savefig(f'{base_dir}/accuracy.png')
+plt.show()
