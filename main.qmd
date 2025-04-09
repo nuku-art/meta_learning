@@ -21,7 +21,7 @@ from sklearn.datasets import fetch_california_housing
 from sklearn.cluster import KMeans
 import random
 import scipy
-from workspace.src.model import meta_learning
+from src.model import meta_learning
 ```
 
 # prepaire dataset
@@ -76,6 +76,7 @@ test_data = test_data[['Latitude', 'Longitude', 'HousingPrices', 'Cluster']]
 model = meta_learning()
 path = '/workspace/output/model/meta_model_0116.pth'
 model.load_state_dict(torch.load(path, weights_only=True))
+device = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu')
 ```
 
 # inference
@@ -92,11 +93,13 @@ this_epoch_data = choiced_region_data[['Latitude','Longitude',choiced_annotation
 numpy_data = this_epoch_data.to_numpy()
 torch_data = torch.from_numpy(numpy_data).to(torch.float32)
 
-rand_index = torch.randint(0,torch_data.size(0),(6,))
+usedata_num = 20
+# rand_index = torch.randint(0,torch_data.size(0),(6,))
+rand_index = torch.randperm(torch_data.size(0))
 support = torch_data[rand_index[:5]]
-query = torch_data[rand_index[5:]]
+query = torch_data[rand_index[5:usedata_num]]
 with torch.no_grad():
-  pred = model(support, query[:,:2])
+  pred = model(support, query[:,:2], device)
 
 print(f'use key:{use_key}')
 print(f'annotation: {choiced_annotation}')
@@ -139,7 +142,7 @@ label_tensor = torch.stack(label_set)
 pred_tensor = torch.stack(pred_set)
 
 ## calcurate MSEloss
-mseloss = torch.norm(label_tensor - pred_tensor, p=2) / (label_tensor.shape[0] * label_tensor.shape[1])
+mseloss = torch.norm(label_tensor - pred_tensor, p=2)**2 / (label_tensor.shape[0] * label_tensor.shape[1])
 print(f'MSELoss: {mseloss}')
 ```
 

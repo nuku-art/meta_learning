@@ -79,6 +79,13 @@ class meta_learning(nn.Module):
           self_k[i,j] = self.kernel_func(x, x_prime, Z)
       support_y = support_set[:,2]
       self_k = self_k.to(device)
+      
+      # print(f'mean: {mean.device}')
+      # print(f'mix_k: {mix_k.device}')
+      # print(f'self_k: {self_k.device}')
+      # print(f'support_y: {support_y.device}')
+      # print(f'support_mean: {support_mean.device}')
+      
       pred = mean + torch.matmul(mix_k.T, torch.linalg.pinv(self_k)) @  (support_y - support_mean)
       y_list.append(pred)
     y = torch.stack(y_list)
